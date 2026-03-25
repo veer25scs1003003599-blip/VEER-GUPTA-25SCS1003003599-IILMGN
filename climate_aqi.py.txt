@@ -1,0 +1,138 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import MinMaxScaler
+
+import joblib
+from datetime import datetime, timedelta
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
+
+# -----------------------------
+# Synthetic Data Generation
+# -----------------------------
+def generate_synthetic_climate(days=3*365):
+    """Generate a synthetic daily climate dataset."""
+    
+    idx = pd.date_range(end=pd.Timestamp.today(), periods=days, freq='D')
+    t = np.arange(days)
+
+    # Temperature
+    base_temp = 25 + 7 * np.sin(2 * np.pi * (t / 365.0))
+    noise_temp = np.random.normal(0, 1.8, size=days)
+
+    events = np.zeros(days)
+    for i in range(0, days, 120):
+        if np.random.rand() > 0.5:
+            events[i:i+7] += np.random.uniform(3, 7)
+        else:
+            events[i:i+5] -= np.random.uniform(3, 6)
+
+    temperature = base_temp + noise_temp + events
+
+    # Humidity
+    base_hum = 60 - 8 * np.sin(2 * np.pi * (t / 365.0))
+    noise_hum = np.random.normal(0, 4, size=days)
+    humidity = np.clip(base_hum + noise_hum - 0.3 * (temperature - temperature.mean()), 10, 100)
+
+    # Other features
+    pressure = 1013 + np.random.normal(0, 6, size=days)
+    wind = np.abs(np.random.normal(4, 1.8, size=days)) + \
+           (np.random.rand(days) < 0.02) * np.random.uniform(5, 12, size=days)
+
+    precip = (np.random.rand(days) < 0.15) * np.round(np.random.exponential(5, size=days), 1)
+    cloud_cover = np.clip(40 + 30 * (precip > 0) + np.random.normal(0, 10, size=days), 0, 100)
+
+    # AQI
+    aqi_base = 70 + 0.5 * (temperature - temperature.mean()) - 2.5 * wind + 0.2 * (100 - humidity)
+    aqi = np.clip(aqi_base + np.random.normal(0, 8, size=days), 10, 500)
+
+    df = pd.DataFrame({
+        'date': idx,
+        'temperature': np.round(temperature, 2),
+        'humidity': np.round(humidity, 2),
+        'pressure': np.round(pressure, 2),
+        'wind_speed': np.round(wind, 2),
+        'precip_mm': np.round(precip, 2),
+        'cloud_cover': np.round(cloud_cover, 1),
+        'AQI': np.round(aqi, 1)
+    }).set_index('date')
+
+    return df
+
+
+# -----------------------------
+# Random Forest Model
+# -----------------------------
+def train_random_forest_aqi(df, save_path='rf_aqi_model.joblib'):
+    """Train RandomForest to predict AQI."""
+
+    features = ['temperature', 'humidity', 'pressure',
+                'wind_speed', 'precip_mm', 'cloud_cover']
+
+    X = df[features].values
+    y = df['AQI'].values
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=RANDOM_SEED, shuffle=True
+    )
+
+    rf = RandomForestRegressor(n_estimators=200, random_state=RANDOM_SEED, n_jobs=-1)
+    rf.fit(X_train, y_train)
+
+    y_pred = rf.predict(X_test)
+
+    print("\nRandomForest AQI Results:")
+    print("MAE =", mean_absolute_error(y_test, y_pred))
+    print("RMSE =", mean_squared_error(y_test, y_pred, squared=False))
+    print("R2 =", r2_score(y_test, y_pred))
+
+    joblib.dump(rf, save_path)
+    return y_test, y_pred
+
+
+# -----------------------------
+# Plot Function
+# -----------------------------
+def plot_series(y_true, y_pred, title):
+    plt.figure(figsize=(10, 4))
+    plt.plot(y_true, label='Actual')
+    plt.plot(y_pred, label='Predicted')
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# -----------------------------
+# Main Function
+# -----------------------------
+def main():
+    out_dir = 'ai_climate_outputs'
+    os.makedirs(out_dir, exist_ok=True)
+
+    print("Generating dataset...")
+    df = generate_synthetic_climate()
+
+    df.to_csv(os.path.join(out_dir, 'dataset.csv'))
+
+    y_test, y_pred = train_random_forest_aqi(
+        df,
+        save_path=os.path.join(out_dir, 'rf_model.joblib')
+    )
+
+    plot_series(y_test[:200], y_pred[:200], "AQI Prediction")
+
+
+# -----------------------------
+# Entry Point
+# -----------------------------
+if __name__ == "__main__":
+    main()
